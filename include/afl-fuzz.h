@@ -480,18 +480,17 @@ struct custom_mutator {
    *
    * (Optional for now. Required in the future)
    *
-   * @param[in] buf Input data to be mutated
-   * @param[in] buf_size Size of input data
+   * @param[inout] buf Pointer to the input data to be mutated and the mutated
+   *     output
+   * @param[in] buf_size Size of the input/output data
    * @param[in] add_buf Buffer containing the additional test case
    * @param[in] add_buf_size Size of the additional test case
-   * @param[out] mutated_out Buffer to store the mutated input
    * @param[in] max_size Maximum size of the mutated output. The mutation must not
    *     produce data larger than max_size.
    * @return Size of the mutated output.
    */
-  size_t (*afl_custom_fuzz)(u8* buf, size_t buf_size,
-                            u8* add_buf, size_t add_buf_size,
-                            u8* mutated_out, size_t max_size);
+  size_t (*afl_custom_fuzz)(u8** buf, size_t buf_size, u8* add_buf,
+                            size_t add_buf_size, size_t max_size);
 
   /**
    * A post-processing function to use right before AFL writes the test case to
@@ -561,6 +560,55 @@ struct custom_mutator {
    *     steps returned in init_trim)
    */
   u32 (*afl_custom_post_trim)(u8 success);
+  
+  /**
+   * Perform a single custom mutation on a given input.
+   * This mutation is stacked with the other muatations in havoc.
+   *
+   * (Optional)
+   *
+   * @param[inout] buf Pointer to the input data to be mutated and the mutated
+   *     output
+   * @param[in] buf_size Size of input data
+   * @param[in] max_size Maximum size of the mutated output. The mutation must
+   *     not produce data larger than max_size.
+   * @return Size of the mutated output.
+   */
+  size_t (*afl_custom_havoc_mutation)(u8** buf, size_t buf_size, size_t max_size);
+  
+  /**
+   * Return the probability (in percentage) that afl_custom_havoc_mutation
+   * is called in havoc. By default it is 6 %.
+   *
+   * (Optional)
+   *
+   * @return The probability (0-100).
+   */
+  u8 (*afl_custom_havoc_mutation_probability)(void);
+
+  /**
+   * Determine whether the fuzzer should fuzz the current queue entry or not.
+   *
+   * (Optional)
+   *
+   * @param filename File name of the test case in the queue entry
+   * @return Return True(1) if the fuzzer will fuzz the queue entry, and
+   *     False(0) otherwise.
+   */
+  u8 (*afl_custom_queue_get)(const u8* filename);
+
+  /**
+   * Allow for additional analysis (e.g. calling a different tool that does a 
+   * different kind of coverage and saves this for the custom mutator).
+   *
+   * (Optional)
+   *
+   * @param filename_new_queue File name of the new queue entry
+   * @param filename_orig_queue File name of the original queue entry. This
+   *     argument can be NULL while initializing the fuzzer
+   */
+  void (*afl_custom_queue_new_entry)(const u8* filename_new_queue,
+                                     const u8* filename_orig_queue);
 };
 
 extern struct custom_mutator* mutator;
@@ -610,6 +658,10 @@ enum {
   /* 03 */ PY_FUNC_INIT_TRIM,
   /* 04 */ PY_FUNC_POST_TRIM,
   /* 05 */ PY_FUNC_TRIM,
+  /* 06 */ PY_FUNC_HAVOC_MUTATION,
+  /* 07 */ PY_FUNC_HAVOC_MUTATION_PROBABILITY,
+  /* 08 */ PY_FUNC_QUEUE_GET,
+  /* 09 */ PY_FUNC_QUEUE_NEW_ENTRY,
   PY_FUNC_COUNT
 
 };
@@ -623,23 +675,25 @@ extern PyObject* py_functions[PY_FUNC_COUNT];
 /* Custom mutators */
 void setup_custom_mutator(void);
 void destroy_custom_mutator(void);
-void load_custom_mutator(const char*);
-void load_custom_mutator_py(const char*);
 u8   trim_case_custom(char** argv, struct queue_entry* q, u8* in_buf);
 
 /* Python */
 #ifdef USE_PYTHON
+
 int    init_py_module(u8*);
 void   finalize_py_module();
 
-void   init_py(unsigned int seed);
-size_t fuzz_py(u8* buf, size_t buf_size,
-               u8* add_buf, size_t add_buf_size,
-               u8* mutated_out, size_t max_size);
-size_t pre_save_py(u8* data, size_t size, u8** new_data);
+void   init_py(unsigned int);
+size_t fuzz_py(u8**, size_t, u8*, size_t, size_t);
+size_t pre_save_py(u8*, size_t, u8**);
 u32    init_trim_py(u8*, size_t);
 u32    post_trim_py(u8);
 void   trim_py(u8**, size_t*);
+size_t havoc_mutation_py(u8**, size_t, size_t);
+u8     havoc_mutation_probability_py(void);
+u8     queue_get_py(const u8*);
+void   queue_new_entry_py(const u8*, const u8*);
+
 #endif
 
 /* Queue */

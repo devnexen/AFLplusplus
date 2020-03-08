@@ -55,6 +55,14 @@ int init_py_module(u8* module_name) {
     py_functions[PY_FUNC_POST_TRIM] =
         PyObject_GetAttrString(py_module, "post_trim");
     py_functions[PY_FUNC_TRIM] = PyObject_GetAttrString(py_module, "trim");
+    py_functions[PY_FUNC_HAVOC_MUTATION] =
+        PyObject_GetAttrString(py_module, "havoc_mutation");
+    py_functions[PY_FUNC_HAVOC_MUTATION_PROBABILITY] =
+        PyObject_GetAttrString(py_module, "havoc_mutation_probability");
+    py_functions[PY_FUNC_QUEUE_GET] =
+        PyObject_GetAttrString(py_module, "queue_get");
+    py_functions[PY_FUNC_QUEUE_NEW_ENTRY] =
+        PyObject_GetAttrString(py_module, "queue_new_entry");
 
     for (py_idx = 0; py_idx < PY_FUNC_COUNT; ++py_idx) {
 
@@ -70,6 +78,12 @@ int init_py_module(u8* module_name) {
           // Implementing the trim API is optional for now
           if (PyErr_Occurred()) PyErr_Print();
           py_notrim = 1;
+
+        } else if ((py_idx >= PY_FUNC_HAVOC_MUTATION) &&
+                   (py_idx <= PY_FUNC_QUEUE_NEW_ENTRY)) {
+
+          // Implenting the havoc and queue API is optional for now
+          if (PyErr_Occurred()) PyErr_Print();
 
         } else {
 
@@ -159,16 +173,15 @@ void init_py(unsigned int seed) {
   }
 }
 
-size_t fuzz_py(u8* buf, size_t buf_size,
-               u8* add_buf, size_t add_buf_size,
-               u8* mutated_out, size_t max_size) {
+size_t fuzz_py(u8** buf, size_t buf_size, u8* add_buf, size_t add_buf_size,
+               size_t max_size) {
 
   size_t mutated_size;
   PyObject *py_args, *py_value;
   py_args = PyTuple_New(3);
 
   /* buf */
-  py_value = PyByteArray_FromStringAndSize(buf, buf_size);
+  py_value = PyByteArray_FromStringAndSize(*buf, buf_size);
   if (!py_value) {
 
     Py_DECREF(py_args);
@@ -211,7 +224,10 @@ size_t fuzz_py(u8* buf, size_t buf_size,
   if (py_value != NULL) {
 
     mutated_size = PyByteArray_Size(py_value);
-    memcpy(mutated_out, PyByteArray_AsString(py_value), mutated_size);
+    if (buf_size < mutated_size)
+      *buf = ck_realloc(*buf, mutated_size);
+
+    memcpy(*buf, PyByteArray_AsString(py_value), mutated_size);
     Py_DECREF(py_value);
     return mutated_size;
 
@@ -351,6 +367,189 @@ void trim_py(u8** out_buf, size_t* out_buf_size) {
     Py_DECREF(py_value);
 
   } else {
+
+    PyErr_Print();
+    FATAL("Call failed");
+
+  }
+
+}
+
+size_t havoc_mutation_py(u8** buf, size_t buf_size, size_t max_size) {
+
+  size_t mutated_size;
+  PyObject *py_args, *py_value;
+  py_args = PyTuple_New(2);
+
+  /* buf */
+  py_value = PyByteArray_FromStringAndSize(*buf, buf_size);
+  if (!py_value) {
+
+    Py_DECREF(py_args);
+    FATAL("Failed to convert arguments");
+
+  }
+
+  PyTuple_SetItem(py_args, 0, py_value);
+
+  /* max_size */
+#if PY_MAJOR_VERSION >= 3
+  py_value = PyLong_FromLong(max_size);
+#else
+  py_value = PyInt_FromLong(max_size);
+#endif
+  if (!py_value) {
+
+    Py_DECREF(py_args);
+    FATAL("Failed to convert arguments");
+
+  }
+
+  PyTuple_SetItem(py_args, 1, py_value);
+
+  py_value = PyObject_CallObject(py_functions[PY_FUNC_HAVOC_MUTATION], py_args);
+
+  Py_DECREF(py_args);
+
+  if (py_value != NULL) {
+
+    mutated_size = PyByteArray_Size(py_value);
+    if (buf_size < mutated_size)
+      *buf = ck_realloc(*buf, mutated_size);
+    
+    memcpy(*buf, PyByteArray_AsString(py_value), mutated_size);
+
+    Py_DECREF(py_value);
+    return mutated_size;
+
+  } else {
+
+    PyErr_Print();
+    FATAL("Call failed");
+
+  }
+
+}
+
+u8 havoc_mutation_probability_py(void) {
+
+  PyObject *py_args, *py_value;
+
+  py_args = PyTuple_New(0);
+  py_value = PyObject_CallObject(py_functions[PY_FUNC_HAVOC_MUTATION_PROBABILITY], py_args);
+  Py_DECREF(py_args);
+
+  if (py_value != NULL) {
+
+    long prob = PyLong_AsLong(py_value);
+    Py_DECREF(py_value);
+    return (u8)prob;
+
+  } else {
+
+    PyErr_Print();
+    FATAL("Call failed");
+
+  }
+
+}
+
+u8 queue_get_py(const u8* filename) {
+
+  PyObject *py_args, *py_value;
+
+  py_args = PyTuple_New(1);
+
+  // File name
+#if PY_MAJOR_VERSION >= 3
+  py_value = PyUnicode_FromString(filename);
+#else
+  py_value = PyString_FromString(filename);
+#endif
+  if (!py_value) {
+
+    Py_DECREF(py_args);
+    FATAL("Failed to convert arguments");
+
+  }
+
+  PyTuple_SetItem(py_args, 0, py_value);
+
+  // Call Python function
+  py_value = PyObject_CallObject(py_functions[PY_FUNC_QUEUE_GET], py_args);
+  Py_DECREF(py_args);
+
+  if (py_value != NULL) {
+
+    int ret = PyObject_IsTrue(py_value);
+    Py_DECREF(py_value);
+    
+    if (ret == -1) {
+
+      PyErr_Print();
+      FATAL("Failed to convert return value");
+
+    }
+
+    return (u8) ret & 0xFF;
+
+  } else {
+    
+    PyErr_Print();
+    FATAL("Call failed");
+
+  }
+
+}
+
+void queue_new_entry_py(const u8* filename_new_queue,
+                        const u8* filename_orig_queue) {
+
+  PyObject *py_args, *py_value;
+
+  py_args = PyTuple_New(2);
+
+  // New queue
+#if PY_MAJOR_VERSION >= 3
+  py_value = PyUnicode_FromString(filename_new_queue);
+#else
+  py_value = PyString_FromString(filename_new_queue);
+#endif
+  if (!py_value) {
+  
+    Py_DECREF(py_args);
+    FATAL("Failed to convert arguments");
+
+  }
+
+  PyTuple_SetItem(py_args, 0, py_value);
+
+  // Orig queue
+  py_value = Py_None;
+  if (filename_orig_queue) {
+
+#if PY_MAJOR_VERSION >= 3
+    py_value = PyUnicode_FromString(filename_orig_queue);
+#else
+    py_value = PyString_FromString(filename_orig_queue);
+#endif
+    if (!py_value) {
+ 
+      Py_DECREF(py_args);
+      FATAL("Failed to convert arguments");
+
+    }
+
+  }
+
+  PyTuple_SetItem(py_args, 1, py_value);
+
+  // Call
+  py_value = PyObject_CallObject(py_functions[PY_FUNC_QUEUE_NEW_ENTRY],
+                                 py_args);
+  Py_DECREF(py_args);
+
+  if (py_value == NULL) {
 
     PyErr_Print();
     FATAL("Call failed");

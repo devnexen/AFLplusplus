@@ -30,22 +30,26 @@ void afl_custom_init(unsigned int seed) {
  *
  * (Optional for now. Required in the future)
  *
- * @param[in] buf Input data to be mutated
+ * @param[in] buf Pointer to input data to be mutated
  * @param[in] buf_size Size of input data
  * @param[in] add_buf Buffer containing the additional test case
  * @param[in] add_buf_size Size of the additional test case
- * @param[out] mutated_out Buffer to store the mutated input
  * @param[in] max_size Maximum size of the mutated output. The mutation must not
  *     produce data larger than max_size.
  * @return Size of the mutated output.
  */
-size_t afl_custom_fuzz(uint8_t *buf, size_t buf_size,
+size_t afl_custom_fuzz(uint8_t **buf, size_t buf_size,
                        uint8_t *add_buf,size_t add_buf_size, // add_buf can be NULL
-                       uint8_t *mutated_out, size_t max_size) {
+                       size_t max_size) {
 
   // Make sure that the packet size does not exceed the maximum size expected by
   // the fuzzer
   size_t mutated_size = data_size <= max_size ? data_size : max_size;
+
+  if (mutated_size > buf_size)
+    *buf = realloc(*buf, mutated_size);
+  
+  uint8_t* mutated_out = *buf;
 
   // Randomly select a command string to add as a header to the packet
   memcpy(mutated_out, commands[rand() % 3], 3);
@@ -53,7 +57,7 @@ size_t afl_custom_fuzz(uint8_t *buf, size_t buf_size,
   // Mutate the payload of the packet
   for (int i = 3; i < mutated_size; i++) {
 
-    mutated_out[i] = (data[i] + rand() % 10) & 0xff;
+    mutated_out[i] = (mutated_out[i] + rand() % 10) & 0xff;
 
   }
 
@@ -89,10 +93,10 @@ size_t afl_custom_pre_save(uint8_t *buf, size_t buf_size, uint8_t **out_buf) {
 
 }
 
-uint8_t *trim_buf;
-size_t trim_buf_size
-int trimmming_steps;
-int cur_step;
+static uint8_t *trim_buf;
+static size_t trim_buf_size;
+static int trimmming_steps;
+static int cur_step;
 
 /**
  * This method is called at the start of each trimming operation and receives
@@ -175,3 +179,79 @@ int afl_custom_post_trim(int success) {
   return trimmming_steps;
 
 }
+
+/**
+ * Perform a single custom mutation on a given input.
+ * This mutation is stacked with the other muatations in havoc.
+ *
+ * (Optional)
+ *
+ * @param[inout] buf Pointer to the input data to be mutated and the mutated
+ *     output
+ * @param[in] buf_size Size of input data
+ * @param[in] max_size Maximum size of the mutated output. The mutation must
+ *     not produce data larger than max_size.
+ * @return Size of the mutated output.
+ */
+size_t afl_custom_havoc_mutation(uint8_t** buf, size_t buf_size, size_t max_size) {
+
+  if (buf_size == 0) {
+
+    *buf = realloc(*buf, 1);
+    **buf = rand() % 256;
+    buf_size = 1;
+
+  }
+
+  size_t victim = rand() % buf_size;
+  (*buf)[victim] += rand() % 10;
+  
+  return buf_size;
+
+}
+
+/**
+ * Return the probability (in percentage) that afl_custom_havoc_mutation
+ * is called in havoc. By default it is 6 %.
+ *
+ * (Optional)
+ *
+ * @return The probability (0-100).
+ */
+uint8_t afl_custom_havoc_mutation_probability(void) {
+
+  return 5; // 5 %
+
+}
+
+/**
+ * Determine whether the fuzzer should fuzz the queue entry or not.
+ *
+ * (Optional)
+ *
+ * @param filename File name of the test case in the queue entry
+ * @return Return True(1) if the fuzzer will fuzz the queue entry, and
+ *     False(0) otherwise.
+ */
+uint8_t afl_custom_queue_get(const uint8_t* filename) {
+
+  return 1;
+
+}
+
+/**
+ * Allow for additional analysis (e.g. calling a different tool that does a 
+ * different kind of coverage and saves this for the custom mutator).
+ *
+ * (Optional)
+ *
+ * @param filename_new_queue File name of the new queue entry
+ * @param filename_orig_queue File name of the original queue entry
+ */
+void afl_custom_queue_new_entry(const uint8_t* filename_new_queue,
+                                const uint8_t* filename_orig_queue) {
+
+  /* Additional analysis on the original or new test case */
+
+}
+
